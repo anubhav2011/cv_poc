@@ -1,0 +1,32 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+pydantic==2.5.0
+
+# PDF Processing
+pdfplumber==0.9.0
+pdf2image==1.16.3
+PyPDF2==3.0.1
+
+# OCR Engines
+pytesseract==0.3.10
+paddleocr==2.7.0.3
+
+# Image Processing
+Pillow==10.0.0
+opencv-python==4.8.0.74
+
+# LLM & API
+openai==1.3.0
+
+# Text Processing & Fuzzy Matching
+python-Levenshtein==0.21.1
+fuzzywuzzy==0.18.0
+
+# Database
+SQLAlchemy==2.0.0
+pymysql==1.1.0
+
+# Logging & Utils
+python-dotenv==1.0.0
+requests==2.31.0

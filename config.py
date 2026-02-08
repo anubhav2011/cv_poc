@@ -35,3 +35,22 @@ CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "")
 
 # POC ONLY — NO AUTHENTICATION
 # MOBILE NUMBER IS SELF-DECLARED VIA FORM
+
+# OCR Configuration
+OCR_PDF_MAX_PAGES = int(os.getenv("OCR_PDF_MAX_PAGES", "10"))
+OCR_PDF_DPI = int(os.getenv("OCR_PDF_DPI", "300"))
+OCR_MIN_TEXT_LENGTH = int(os.getenv("OCR_MIN_TEXT_LENGTH", "50"))
+OCR_TIMEOUT = int(os.getenv("OCR_TIMEOUT", "30"))
+
+# LLM Configuration
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4")
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
+
+# Verification Configuration
+VERIFICATION_NAME_THRESHOLD = float(os.getenv("VERIFICATION_NAME_THRESHOLD", "0.85"))
+VERIFICATION_DOB_EXACT = os.getenv("VERIFICATION_DOB_EXACT", "true").lower() == "true"
+
+# File Upload Configuration
+UPLOAD_MAX_SIZE_MB = int(os.getenv("UPLOAD_MAX_SIZE_MB", "20"))
+ALLOWED_EXTENSIONS = ["pdf", "jpg", "jpeg", "png"]
