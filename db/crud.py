@@ -449,6 +449,60 @@ def get_worker_document_paths(worker_id: str) -> dict:
             conn.close()
 
 
+def save_personal_ocr_raw_text(worker_id: str, raw_ocr_text: str) -> bool:
+    """Save raw OCR text for personal document for audit/debugging purposes"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+        UPDATE workers 
+        SET personal_ocr_raw_text = ?
+        WHERE worker_id = ?
+        """, (raw_ocr_text, worker_id))
+        conn.commit()
+        
+        if cursor.rowcount == 0:
+            logger.error(f"[OCR RAW TEXT] UPDATE workers matched 0 rows for worker_id={worker_id}")
+            return False
+        logger.info(f"[OCR RAW TEXT] ✓ Saved raw OCR text for personal document ({len(raw_ocr_text)} chars)")
+        return True
+    except Exception as e:
+        logger.error(f"[OCR RAW TEXT] Error saving personal OCR raw text: {str(e)}", exc_info=True)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def save_educational_ocr_raw_text(doc_id: str, raw_ocr_text: str) -> bool:
+    """Save raw OCR text for educational document for audit/debugging purposes"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+        UPDATE educational_documents 
+        SET raw_ocr_text = ?
+        WHERE id = ?
+        """, (raw_ocr_text, doc_id))
+        conn.commit()
+        
+        if cursor.rowcount == 0:
+            logger.error(f"[OCR RAW TEXT] UPDATE educational_documents matched 0 rows for id={doc_id}")
+            return False
+        logger.info(f"[OCR RAW TEXT] ✓ Saved raw OCR text for educational document ({len(raw_ocr_text)} chars)")
+        return True
+    except Exception as e:
+        logger.error(f"[OCR RAW TEXT] Error saving educational OCR raw text: {str(e)}", exc_info=True)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def save_educational_document(worker_id: str, education_data: dict) -> bool:
     """Save educational document data extracted from OCR"""
     conn = None

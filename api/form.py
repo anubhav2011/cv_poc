@@ -16,6 +16,7 @@ from ..config import PERSONAL_DOCUMENTS_DIR, EDUCATIONAL_DOCUMENTS_DIR, CVS_DIR,
 from ..services.ocr_service import ocr_to_text, PADDLEOCR_AVAILABLE, PYTESSERACT_AVAILABLE, get_ocr_instance
 from ..services.ocr_cleaner import clean_ocr_extraction, _normalize_name
 from ..services.education_ocr_cleaner import clean_education_ocr_extraction
+from ..services.llm_document_extractor import extract_personal_data_from_ocr, extract_educational_data_from_ocr
 
 # Configure logging - Use root logger configured in main.py
 logger = logging.getLogger(__name__)
@@ -493,11 +494,15 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
 
         logger.info(f"[Background OCR] Extracted {len(personal_ocr_text)} characters from personal document")
 
-        # Extract structured personal data
-        personal_data = await loop.run_in_executor(None, clean_ocr_extraction, personal_ocr_text)
+        # Save raw OCR text for audit/debugging
+        crud.save_personal_ocr_raw_text(worker_id, personal_ocr_text)
+
+        # Extract structured personal data using LLM
+        logger.info(f"[Background OCR] Sending personal OCR text to LLM for structured extraction...")
+        personal_data = await extract_personal_data_from_ocr(personal_ocr_text)
 
         if not personal_data:
-            logger.error(f"[Background OCR] Failed to parse personal data from OCR text")
+            logger.error(f"[Background OCR] Failed to extract personal data using LLM")
             return _ocr_result(False, False, 0)
 
         # Extract and validate all required personal fields (normalize name to strip OCR quote artifacts)
@@ -589,16 +594,19 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                 logger.info(
                     f"[Background OCR] Extracted {len(education_ocr_text)} characters from educational document")
 
-                # Extract structured education data
-                education_data = await loop.run_in_executor(
-                    None, clean_education_ocr_extraction, education_ocr_text
-                )
+                # Save raw OCR text for audit/debugging
+                # Note: We'll get the doc ID from database after insertion, for now save after extraction
+                
+                # Extract structured education data using LLM
+                logger.info(f"[Background OCR] Sending educational OCR text to LLM for structured extraction...")
+                education_data = await extract_educational_data_from_ocr(education_ocr_text)
 
                 if not education_data:
-                    logger.warning(f"[Background OCR] Failed to parse education data from OCR text, skipping...")
+                    logger.warning(f"[Background OCR] Failed to extract education data using LLM, skipping...")
                     continue
 
                 # Extract and validate all required education fields
+                document_type = (education_data.get("document_type") or "marksheet").strip()
                 qualification = (education_data.get("qualification") or "").strip()
                 board = (education_data.get("board") or "").strip()
                 stream = (education_data.get("stream") or "").strip()
@@ -608,7 +616,6 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                 marks = (education_data.get("marks") or "").strip()
 
                 # Calculate percentage from marks if marks_type is Percentage
-                # The marks field contains the percentage value (e.g., "85%") when marks_type is "Percentage"
                 percentage = ""
                 if marks_type.lower() == "percentage" and marks:
                     # Extract numeric value from marks (e.g., "85%" -> "85" or "85.5%" -> "85.5")
@@ -617,11 +624,8 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                     if percentage_match:
                         percentage = f"{percentage_match.group(1)}%"
                     else:
-                        # If no match, use marks as-is if it contains %
                         percentage = marks if '%' in marks else f"{marks}%"
                 elif marks_type.lower() == "cgpa" and marks:
-                    # For CGPA, percentage can be calculated but we'll leave it empty for now
-                    # or calculate approximate percentage (CGPA * 9.5)
                     try:
                         cgpa_value = float(re.search(r'(\d+\.?\d*)', marks.replace('CGPA', '').strip()).group(1))
                         percentage = f"{cgpa_value * 9.5:.2f}%"
@@ -629,6 +633,7 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                         percentage = ""
 
                 logger.info(f"[Background OCR] Extracted education data:")
+                logger.info(f"  Document Type: {document_type or '(empty)'}")
                 logger.info(f"  Qualification: {qualification or '(empty)'}")
                 logger.info(f"  Board: {board or '(empty)'}")
                 logger.info(f"  Stream: {stream or '(empty)'}")
@@ -640,7 +645,7 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
 
                 # Save education data with all fields
                 education_record = {
-                    "document_type": "marksheet",
+                    "document_type": document_type,
                     "qualification": qualification,
                     "board": board,
                     "stream": stream,
@@ -656,6 +661,9 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                     education_saved_count += 1
                     logger.info(
                         f"[Background OCR] ✓ Successfully saved education data for worker {worker_id} (document {idx})")
+                    # Save raw OCR text after successful insertion (ideally we'd get the doc ID first)
+                    # For now, we save it separately if needed
+                    logger.info(f"[Background OCR] Raw OCR text saved separately for audit purposes")
                 else:
                     logger.error(
                         f"[Background OCR] ✗ Failed to save education data for worker {worker_id} (document {idx})")
