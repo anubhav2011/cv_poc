@@ -95,7 +95,8 @@ def init_db():
         for column_name, column_type in [
             ("personal_document_path", "TEXT"),
             ("educational_document_paths", "TEXT"),  # JSON array of paths
-            ("video_url", "TEXT")  # Cloudinary (or other) URL for video resume
+            ("video_url", "TEXT"),  # Cloudinary (or other) URL for video resume
+            ("personal_ocr_raw_text", "TEXT")  # Raw OCR text from personal document (for audit/debugging)
         ]:
             try:
                 cursor.execute(f"ALTER TABLE workers ADD COLUMN {column_name} {column_type}")
@@ -196,6 +197,12 @@ def init_db():
             FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
         )
         """)
+        # Add OCR raw text column for educational documents (for audit/debugging)
+        try:
+            cursor.execute("ALTER TABLE educational_documents ADD COLUMN raw_ocr_text TEXT")
+            logger.info("Added column raw_ocr_text to educational_documents table")
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
         # Experience conversation sessions table
         logger.info("Creating experience_sessions table...")
