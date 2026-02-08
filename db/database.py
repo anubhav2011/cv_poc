@@ -95,7 +95,10 @@ def init_db():
         for column_name, column_type in [
             ("personal_document_path", "TEXT"),
             ("educational_document_paths", "TEXT"),  # JSON array of paths
-            ("video_url", "TEXT")  # Cloudinary (or other) URL for video resume
+            ("video_url", "TEXT"),  # Cloudinary (or other) URL for video resume
+            ("verification_status", "TEXT"),  # 'verified', 'failed', 'pending'
+            ("verified_at", "TIMESTAMP"),
+            ("verification_errors", "TEXT")  # JSON with mismatch details
         ]:
             try:
                 cursor.execute(f"ALTER TABLE workers ADD COLUMN {column_name} {column_type}")
@@ -196,6 +199,21 @@ def init_db():
             FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
         )
         """)
+        
+        # Add new columns to educational_documents for extraction tracking
+        for column_name, column_type in [
+            ("document_class", "TEXT"),  # '10th' or '12th'
+            ("raw_ocr_text", "TEXT"),  # Complete OCR output
+            ("extracted_data", "TEXT"),  # JSON with extracted fields
+            ("file_path", "TEXT"),
+            ("extraction_status", "TEXT"),  # 'success', 'failed'
+            ("verification_flag", "TEXT")  # 'verified', 'failed'
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE educational_documents ADD COLUMN {column_name} {column_type}")
+                logger.info(f"Added column {column_name} to educational_documents table")
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
         # Experience conversation sessions table
         logger.info("Creating experience_sessions table...")
@@ -249,6 +267,37 @@ def init_db():
         BEGIN
             UPDATE cv_status SET updated_at = CURRENT_TIMESTAMP WHERE worker_id = NEW.worker_id;
         END
+        """)
+        
+        # Document extraction log table - audit trail for OCR and LLM extractions
+        logger.info("Creating document_extraction_log table...")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS document_extraction_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id TEXT NOT NULL,
+            extraction_type TEXT,
+            raw_ocr_text TEXT,
+            extracted_data TEXT,
+            file_path TEXT,
+            extraction_status TEXT,
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
+        )
+        """)
+        
+        # Document verification log table - audit trail for cross-document verification
+        logger.info("Creating document_verification_log table...")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS document_verification_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id TEXT NOT NULL,
+            verification_type TEXT,
+            comparison_result TEXT,
+            verification_status TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
+        )
         """)
 
         conn.commit()

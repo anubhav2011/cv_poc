@@ -28,6 +28,7 @@ from app import config
 
 # Import routers
 from app.api import form, voice, cv, jobs, documents, debug, experience
+from app.api.document_endpoints import enhanced_router
 from app.db.database import init_db
 
 # Initialize database
@@ -61,6 +62,7 @@ app.add_middleware(
 
 # Include routers (signup is on form.router as POST /form/signup)
 app.include_router(form.router)
+app.include_router(enhanced_router)  # Enhanced document endpoints
 app.include_router(voice.router)
 app.include_router(cv.router)
 app.include_router(jobs.router)

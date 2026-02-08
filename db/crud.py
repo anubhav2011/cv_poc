@@ -1557,3 +1557,219 @@ def mark_cv_generated(worker_id: str) -> bool:
     finally:
         if conn is not None:
             conn.close()
+
+
+# ─────────────────────────────────────────────────────────────
+# NEW FUNCTIONS FOR DOCUMENT EXTRACTION & VERIFICATION
+# ─────────────────────────────────────────────────────────────
+
+def save_document_extraction(worker_id: str, extraction_type: str, raw_ocr_text: str, 
+                             extracted_data: dict, file_path: str, extraction_status: str = "success",
+                             error_message: str = None) -> bool:
+    """Save OCR extraction results to audit log"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        extracted_data_json = json.dumps(extracted_data, ensure_ascii=False) if extracted_data else None
+        
+        cursor.execute("""
+        INSERT INTO document_extraction_log 
+        (worker_id, extraction_type, raw_ocr_text, extracted_data, file_path, extraction_status, error_message)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (worker_id, extraction_type, raw_ocr_text, extracted_data_json, file_path, extraction_status, error_message))
+        
+        conn.commit()
+        logger.info(f"[EXTRACTION LOG] Saved {extraction_type} extraction for worker {worker_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving document extraction for {worker_id}: {str(e)}", exc_info=True)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_educational_document(worker_id: str, class_level: str) -> dict:
+    """Get specific 10th or 12th document for a worker"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+        SELECT * FROM educational_documents 
+        WHERE worker_id = ? AND document_class = ?
+        ORDER BY created_at DESC LIMIT 1
+        """, (worker_id, class_level))
+        
+        row = cursor.fetchone()
+        if row:
+            data = dict(row)
+            # Parse JSON fields if present
+            if data.get("extracted_data"):
+                try:
+                    data["extracted_data"] = json.loads(data["extracted_data"])
+                except (TypeError, json.JSONDecodeError):
+                    data["extracted_data"] = {}
+            return data
+        return None
+    except Exception as e:
+        logger.error(f"Error getting educational document {class_level} for {worker_id}: {str(e)}", exc_info=True)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def update_worker_verification_status(worker_id: str, verification_status: str, 
+                                     verification_errors: dict = None) -> bool:
+    """Update worker's verification status"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        verification_errors_json = json.dumps(verification_errors, ensure_ascii=False) if verification_errors else None
+        
+        cursor.execute("""
+        UPDATE workers
+        SET verification_status = ?, verified_at = CURRENT_TIMESTAMP, verification_errors = ?
+        WHERE worker_id = ?
+        """, (verification_status, verification_errors_json, worker_id))
+        
+        conn.commit()
+        logger.info(f"[VERIFICATION] Updated verification status for {worker_id}: {verification_status}")
+        return cursor.rowcount > 0
+    except Exception as e:
+        logger.error(f"Error updating verification status for {worker_id}: {str(e)}", exc_info=True)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def save_verification_log(worker_id: str, verification_type: str, comparison_result: dict,
+                         verification_status: str) -> bool:
+    """Log verification comparison results"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        comparison_result_json = json.dumps(comparison_result, ensure_ascii=False) if comparison_result else None
+        
+        cursor.execute("""
+        INSERT INTO document_verification_log
+        (worker_id, verification_type, comparison_result, verification_status)
+        VALUES (?, ?, ?, ?)
+        """, (worker_id, verification_type, comparison_result_json, verification_status))
+        
+        conn.commit()
+        logger.info(f"[VERIFICATION LOG] Saved {verification_type} verification for worker {worker_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving verification log for {worker_id}: {str(e)}", exc_info=True)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def update_educational_document_extraction(worker_id: str, document_class: str, extracted_data: dict,
+                                           raw_ocr_text: str, file_path: str) -> bool:
+    """Update or create educational document with extracted data"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        extracted_data_json = json.dumps(extracted_data, ensure_ascii=False) if extracted_data else None
+        
+        # Check if document already exists
+        cursor.execute("""
+        SELECT id FROM educational_documents
+        WHERE worker_id = ? AND document_class = ?
+        LIMIT 1
+        """, (worker_id, document_class))
+        
+        existing = cursor.fetchone()
+        
+        if existing:
+            # Update existing document
+            cursor.execute("""
+            UPDATE educational_documents
+            SET document_type = ?, qualification = ?, board = ?, stream = ?, 
+                year_of_passing = ?, school_name = ?, marks_type = ?, marks = ?,
+                raw_ocr_text = ?, extracted_data = ?, file_path = ?, extraction_status = ?
+            WHERE worker_id = ? AND document_class = ?
+            """, (
+                extracted_data.get("document_type"),
+                extracted_data.get("qualification"),
+                extracted_data.get("board"),
+                extracted_data.get("stream"),
+                extracted_data.get("year_of_passing"),
+                extracted_data.get("school_name"),
+                extracted_data.get("marks_type"),
+                extracted_data.get("marks"),
+                raw_ocr_text,
+                extracted_data_json,
+                file_path,
+                "success",
+                worker_id,
+                document_class
+            ))
+            logger.info(f"[EDUCATION] Updated {document_class} document for {worker_id}")
+        else:
+            # Insert new document
+            cursor.execute("""
+            INSERT INTO educational_documents
+            (worker_id, document_class, document_type, qualification, board, stream,
+             year_of_passing, school_name, marks_type, marks, raw_ocr_text, extracted_data,
+             file_path, extraction_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                worker_id,
+                document_class,
+                extracted_data.get("document_type"),
+                extracted_data.get("qualification"),
+                extracted_data.get("board"),
+                extracted_data.get("stream"),
+                extracted_data.get("year_of_passing"),
+                extracted_data.get("school_name"),
+                extracted_data.get("marks_type"),
+                extracted_data.get("marks"),
+                raw_ocr_text,
+                extracted_data_json,
+                file_path,
+                "success"
+            ))
+            logger.info(f"[EDUCATION] Saved {document_class} document for {worker_id}")
+        
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error saving educational document for {worker_id} ({document_class}): {str(e)}", exc_info=True)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_worker_complete_data(worker_id: str) -> dict:
+    """Get all personal and educational data for a worker"""
+    try:
+        personal_data = get_worker(worker_id)
+        education_10th = get_educational_document(worker_id, "10th")
+        education_12th = get_educational_document(worker_id, "12th")
+        
+        return {
+            "personal": personal_data,
+            "education_10th": education_10th,
+            "education_12th": education_12th
+        }
+    except Exception as e:
+        logger.error(f"Error getting complete data for {worker_id}: {str(e)}", exc_info=True)
+        return None
+
