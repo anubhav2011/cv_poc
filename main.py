@@ -26,6 +26,10 @@ load_dotenv()
 # Import config to ensure directories are created on startup
 from app import config
 
+# Setup debug file logging
+from app.utils.logger import setup_debug_logging
+setup_debug_logging()
+
 # Import routers
 from app.api import form, voice, cv, jobs, documents, debug, experience
 from app.db.database import init_db

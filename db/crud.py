@@ -831,13 +831,14 @@ def update_voice_session(call_id: str, step: int, status: str = "ongoing", respo
             logger.info(f"Setting exp_ready={exp_ready} (stored as {1 if exp_ready else 0}) for call_id={call_id}")
 
         updates.append("updated_at = CURRENT_TIMESTAMP")
-        params.append(call_id)
 
         query = f"""
         UPDATE voice_sessions 
         SET {', '.join(updates)}
         WHERE call_id = ?
         """
+        params.append(call_id)
+        
         cursor.execute(query, params)
         conn.commit()
         if cursor.rowcount == 0:
