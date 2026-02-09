@@ -341,14 +341,17 @@ async def submit_transcript(body: TranscriptSubmitRequest):
 
     # STEP 2: Pass transcript to LLM for comprehensive experience extraction
     logger.info("=" * 80)
-    logger.info("🤖 PASSING TRANSCRIPT TO LLM FOR COMPREHENSIVE EXPERIENCE EXTRACTION")
+    logger.info("🤖 STARTING COMPREHENSIVE EXPERIENCE EXTRACTION FROM TRANSCRIPT")
     logger.info(f"  Call ID: {call_id}")
+    logger.info(f"  Worker ID: {worker_id}")
     logger.info(f"  Transcript length: {len(transcript)} characters")
     logger.info("  Using system prompt-based extraction (includes multiple workplaces)")
     logger.info("=" * 80)
 
     # NEW: Use comprehensive extraction that follows system prompt structure
+    logger.info(f"[EXTRACTION] Calling extract_from_transcript_comprehensive()...")
     experience = extract_from_transcript_comprehensive(transcript)
+    logger.info(f"[EXTRACTION] ✓ Extraction completed successfully")
     # COMMENTED OUT OLD CODE: Simple extraction without workplaces
     # experience = extract_from_transcript(transcript)
 
@@ -357,21 +360,51 @@ async def submit_transcript(body: TranscriptSubmitRequest):
     # Log extracted workplaces count
     workplaces_count = len(experience.get("workplaces", []))
     if workplaces_count > 0:
-        logger.info(f"✓ Extracted {workplaces_count} workplace(s) from transcript")
+        logger.info(f"[EXTRACTION] ✓ Extracted {workplaces_count} workplace(s) from transcript")
+        for idx, workplace in enumerate(experience.get("workplaces", []), 1):
+            logger.info(f"[EXTRACTION]   Workplace {idx}: {workplace.get('job_title', 'Unknown')} at {workplace.get('company_name', 'Unknown')}")
     else:
-        logger.info("⚠ No workplaces extracted - falling back to basic experience data")
+        logger.info("[EXTRACTION] ⚠ No workplaces extracted - falling back to basic experience data")
+
+    # Log extracted skills and tools
+    skills = experience.get("skills", [])
+    tools = experience.get("tools", [])
+    if skills:
+        logger.info(f"[EXTRACTION] ✓ Skills extracted ({len(skills)}): {', '.join(skills[:5])}")
+    if tools:
+        logger.info(f"[EXTRACTION] ✓ Tools extracted ({len(tools)}): {', '.join(tools[:5])}")
 
     logger.info("=" * 80)
-    logger.info("✓ EXPERIENCE EXTRACTED FROM TRANSCRIPT")
-    logger.info(f"  Extracted Data: {json.dumps(experience, ensure_ascii=False, indent=2)}")
+    logger.info("✓ EXPERIENCE EXTRACTION COMPLETED")
+    logger.info(f"  Call ID: {call_id}")
+    logger.info(f"  Status: Ready for database storage")
+    logger.info(f"  Extracted Data (summary):")
+    logger.info(f"    - Job Title: {experience.get('primary_skill', 'N/A')}")
+    logger.info(f"    - Experience: {experience.get('total_experience', 'N/A')}")
+    logger.info(f"    - Location: {experience.get('preferred_location', 'N/A')}")
+    logger.info(f"    - Workplaces: {workplaces_count}")
+    logger.info(f"    - Skills: {len(skills)}")
+    logger.info(f"    - Tools: {len(tools)}")
     logger.info("=" * 80)
 
     # STEP 3: Store transcript and experience in database, set exp_ready=true after extraction completes
-    logger.info(f"Storing transcript and experience in database for call_id: {call_id}")
+    logger.info(f"[DB_UPDATE] Storing transcript and experience data in database...")
     logger.info("=" * 80)
-    logger.info("🚩 SETTING exp_ready=TRUE (extraction complete, ready for review)")
+    logger.info("🚩 SETTING exp_ready=TRUE (experience extraction complete)")
     logger.info(f"  Call ID: {call_id}")
+    logger.info(f"  Worker ID: {worker_id}")
+    logger.info(f"  Experience ready for frontend review: YES")
+    logger.info(f"  Timestamp: {datetime.now().isoformat()}")
     logger.info("=" * 80)
+    
+    logger.info("[DB_UPDATE] Calling crud.update_voice_session()...")
+    logger.info(f"[DB_UPDATE]   - call_id: {call_id}")
+    logger.info(f"[DB_UPDATE]   - step: 4")
+    logger.info(f"[DB_UPDATE]   - status: completed")
+    logger.info(f"[DB_UPDATE]   - transcript: {len(transcript)} chars")
+    logger.info(f"[DB_UPDATE]   - experience_json: {len(experience_json)} chars")
+    logger.info(f"[DB_UPDATE]   - exp_ready: TRUE (boolean)")
+    
     success = crud.update_voice_session(
         call_id,
         4,
@@ -380,17 +413,36 @@ async def submit_transcript(body: TranscriptSubmitRequest):
         experience_json=experience_json,
         exp_ready=True  # Flag-based flow: set exp_ready=true after extraction completes
     )
+    
     if success:
-        logger.info(f"✓ Transcript and experience stored successfully in database for call_id: {call_id}")
-        logger.info(f"✓ exp_ready flag set to TRUE - experience ready for frontend review")
+        logger.info("[DB_UPDATE] ✓ Database update successful")
+        logger.info(f"[DB_UPDATE] ✓ Transcript stored ({len(transcript)} chars)")
+        logger.info(f"[DB_UPDATE] ✓ Experience data stored ({len(experience_json)} chars)")
+        logger.info(f"✓ exp_ready flag SET TO TRUE in database")
         logger.info(f"✓ You can check transcript using: GET /debug/transcripts/{call_id}")
     else:
-        logger.error(f"✗ Failed to store transcript in database for call_id: {call_id}")
+        logger.error(f"[DB_UPDATE] ✗ Database update FAILED for call_id: {call_id}")
+        logger.error(f"[DB_UPDATE] ✗ exp_ready flag may not have been set correctly")
 
-    # FLAG-BASED FLOW: Read exp_ready from database to ensure response reflects actual state
+    # FLAG-BASED FLOW: Read exp_ready from database to verify it was set correctly
+    logger.info("[DB_VERIFY] Verifying exp_ready flag was set correctly in database...")
     session = crud.get_voice_session(call_id)
     exp_ready_from_db = bool(session.get("exp_ready", 0)) if session else False
-    logger.info(f"✓ Verified exp_ready flag from database: {exp_ready_from_db}")
+    
+    logger.info(f"[DB_VERIFY] Database query result:")
+    logger.info(f"[DB_VERIFY]   - Session exists: {session is not None}")
+    if session:
+        logger.info(f"[DB_VERIFY]   - exp_ready (raw): {session.get('exp_ready')} (type: {type(session.get('exp_ready'))})")
+        logger.info(f"[DB_VERIFY]   - exp_ready (bool): {exp_ready_from_db}")
+        logger.info(f"[DB_VERIFY]   - status: {session.get('status')}")
+        logger.info(f"[DB_VERIFY]   - current_step: {session.get('current_step')}")
+        logger.info(f"[DB_VERIFY]   - has transcript: {len(session.get('transcript', '')) > 0}")
+        logger.info(f"[DB_VERIFY]   - has experience_json: {len(session.get('experience_json', '')) > 0}")
+    
+    if exp_ready_from_db:
+        logger.info(f"✓ VERIFIED: exp_ready flag is TRUE in database")
+    else:
+        logger.error(f"✗ ERROR: exp_ready flag is NOT TRUE in database (value: {session.get('exp_ready') if session else 'session not found'})")
 
     # STEP 4: FLAG-BASED FLOW - Do NOT save experience to work_experience table or generate CV automatically
     # Experience is stored in voice_sessions.experience_json and will be saved after user confirmation

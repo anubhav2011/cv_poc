@@ -207,11 +207,18 @@ async def extract_experience(request: ExtractRequest):
     """
     try:
         session_id = request.session_id
+        logger.info("=" * 80)
+        logger.info("🤖 STARTING EXPERIENCE EXTRACTION FROM CONVERSATION")
+        logger.info(f"  Session ID: {session_id}")
+        logger.info("=" * 80)
         
         # Get session
         session = crud.get_experience_session(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
+        
+        logger.info(f"[EXTRACT] Session found: worker_id={session.get('worker_id')}")
+        logger.info(f"[EXTRACT] Session status: {session.get('status')}")
         
         if session["status"] != "completed":
             raise HTTPException(status_code=400, detail="Session must be completed before extraction")
@@ -221,6 +228,10 @@ async def extract_experience(request: ExtractRequest):
         
         if not raw_conversation:
             raise HTTPException(status_code=400, detail="No conversation data found")
+        
+        logger.info(f"[EXTRACT] Raw conversation loaded with {len(raw_conversation)} fields")
+        for field, value in raw_conversation.items():
+            logger.info(f"[EXTRACT]   - {field}: {str(value)[:60]}...")
         
         # Extract structured data using experience extractor
         # Map the fields from system prompt to extractor format
@@ -232,7 +243,9 @@ async def extract_experience(request: ExtractRequest):
             "preferred_location": raw_conversation.get("preferred_location", "")
         }
         
+        logger.info(f"[EXTRACT] Calling extract_from_responses()...")
         structured_data = extract_from_responses(responses_for_extraction)
+        logger.info(f"[EXTRACT] ✓ Extraction completed")
         
         # The extractor now handles skills and tools separately in new format
         # Keep backward compatibility
@@ -247,25 +260,47 @@ async def extract_experience(request: ExtractRequest):
             all_items = structured_data.get("skills", []) + structured_data.get("tools", [])
             structured_data["skills_combined"] = all_items
         
+        logger.info(f"[EXTRACT] Structured data created:")
+        logger.info(f"[EXTRACT]   - Job Title: {structured_data.get('primary_skill', 'N/A')}")
+        logger.info(f"[EXTRACT]   - Experience: {structured_data.get('experience_years', 'N/A')}")
+        logger.info(f"[EXTRACT]   - Location: {structured_data.get('preferred_location', 'N/A')}")
+        logger.info(f"[EXTRACT]   - Skills: {len(structured_data.get('skills', []))} items")
+        logger.info(f"[EXTRACT]   - Tools: {len(structured_data.get('tools', []))} items")
+        
         # Validate extracted data
+        logger.info(f"[EXTRACT] Validating extracted experience data...")
         if not validate_extracted_experience(structured_data):
-            logger.warning(f"Extracted experience data validation failed for session {session_id}")
+            logger.warning(f"[EXTRACT] ⚠ Validation warning for session {session_id}")
+        else:
+            logger.info(f"[EXTRACT] ✓ Validation passed")
         
         # Save structured experience to database
         worker_id = session["worker_id"]
+        logger.info(f"[EXTRACT] Saving experience to work_experience table...")
+        logger.info(f"[EXTRACT]   - Worker ID: {worker_id}")
         success = crud.save_experience(worker_id, structured_data)
         
         if not success:
+            logger.error(f"[EXTRACT] ✗ Failed to save experience data to database")
             raise HTTPException(status_code=500, detail="Failed to save experience data")
         
+        logger.info(f"[EXTRACT] ✓ Experience saved to work_experience table")
+        
         # Update session with structured data
+        logger.info(f"[EXTRACT] Updating experience session with structured data...")
         crud.update_experience_session_with_structured_data(
             session_id, 
             json.dumps(raw_conversation, ensure_ascii=False),
             json.dumps(structured_data, ensure_ascii=False)
         )
+        logger.info(f"[EXTRACT] ✓ Experience session updated")
         
-        logger.info(f"Experience extracted and saved: session={session_id}, worker={worker_id}")
+        logger.info("=" * 80)
+        logger.info(f"✓ EXPERIENCE EXTRACTION COMPLETED SUCCESSFULLY")
+        logger.info(f"  Session ID: {session_id}")
+        logger.info(f"  Worker ID: {worker_id}")
+        logger.info(f"  Status: Ready for frontend review")
+        logger.info("=" * 80)
         
         return JSONResponse(
             status_code=200,

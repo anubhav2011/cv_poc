@@ -61,6 +61,8 @@ def extract_from_responses(responses: dict) -> dict:
         "preferred_location": "raw response"
     }
     """
+    logger.info("[EXTRACTION] Starting extract_from_responses()")
+    logger.info(f"[EXTRACTION] Input fields: {list(responses.keys())}")
     
     result = {
         "primary_skill": "",
@@ -71,14 +73,17 @@ def extract_from_responses(responses: dict) -> dict:
     }
     
     # Primary skill
+    logger.info("[EXTRACTION] Extracting primary_skill...")
     if "primary_skill" in responses:
         skill_text = responses["primary_skill"]
         if isinstance(skill_text, str) and len(skill_text) > 0:
             # Extract first meaningful phrase
             words = skill_text.split()
             result["primary_skill"] = " ".join(words[:3]).strip()
+            logger.info(f"[EXTRACTION]   ✓ Primary skill: {result['primary_skill']}")
     
     # Experience years
+    logger.info("[EXTRACTION] Extracting experience_years...")
     if "experience_years" in responses:
         exp_text = responses["experience_years"]
         try:
@@ -86,18 +91,62 @@ def extract_from_responses(responses: dict) -> dict:
             numbers = re.findall(r'\d+', str(exp_text))
             if numbers:
                 result["experience_years"] = int(numbers[0])
+                logger.info(f"[EXTRACTION]   ✓ Years of experience: {result['experience_years']}")
         except:
+            logger.warning(f"[EXTRACTION]   ⚠ Failed to parse experience_years: {exp_text}")
             pass
     
     # Skills
+    logger.info("[EXTRACTION] Extracting skills...")
     if "skills" in responses:
         skills_text = responses["skills"]
         if isinstance(skills_text, str):
             # Split by common delimiters
             skills = [s.strip() for s in skills_text.split(',')]
             result["skills"] = [s for s in skills if len(s) > 2][:5]
+            logger.info(f"[EXTRACTION]   ✓ Skills extracted: {len(result['skills'])} items - {result['skills']}")
     
     # Tools
+    logger.info("[EXTRACTION] Extracting tools...")
+    if "tools" in responses:
+        tools_text = responses["tools"]
+        if isinstance(tools_text, str):
+            # Split by common delimiters
+            tools = [t.strip() for t in tools_text.split(',')]
+            result["tools"] = [t for t in tools if len(t) > 2][:5]
+            logger.info(f"[EXTRACTION]   ✓ Tools extracted: {len(result['tools'])} items - {result['tools']}")
+    
+    # Preferred location - clean location name
+    logger.info("[EXTRACTION] Extracting preferred_location...")
+    if "preferred_location" in responses:
+        loc_text = responses["preferred_location"]
+        if isinstance(loc_text, str):
+            # Rule-based location cleaning (fallback)
+            cleaned_location = clean_location_name(loc_text)
+            result["preferred_location"] = cleaned_location
+            logger.info(f"[EXTRACTION]   ✓ Location: {cleaned_location}")
+    
+    # Try OpenAI for better structuring if available
+    if openai_client:
+        logger.info("[EXTRACTION] Attempting OpenAI-based structuring...")
+        openai_result = structure_with_openai(responses)
+        if openai_result:
+            logger.info("[EXTRACTION]   ✓ OpenAI structuring succeeded")
+            logger.info(f"[EXTRACTION]   Result: {openai_result}")
+            return openai_result
+        else:
+            logger.info("[EXTRACTION]   ⚠ OpenAI structuring returned None, using fallback")
+
+    # Fallback to rule-based if LLM not available
+    logger.info("[EXTRACTION] Using rule-based extraction (fallback)")
+    logger.info(f"[EXTRACTION] Final result:")
+    logger.info(f"[EXTRACTION]   - primary_skill: {result['primary_skill']}")
+    logger.info(f"[EXTRACTION]   - experience_years: {result['experience_years']}")
+    logger.info(f"[EXTRACTION]   - skills: {result['skills']}")
+    logger.info(f"[EXTRACTION]   - tools: {result['tools']}")
+    logger.info(f"[EXTRACTION]   - preferred_location: {result['preferred_location']}")
+    
+    return result
     if "tools" in responses:
         tools_text = responses["tools"]
         if isinstance(tools_text, str):
@@ -173,13 +222,19 @@ def get_llm_structuring_prompt(responses: dict) -> str:
 def structure_with_openai(responses: dict) -> Optional[dict]:
     """Structure experience data using OpenAI API - Returns clean structured JSON"""
     try:
+        logger.info("[LLM_STRUCT] Starting OpenAI structuring...")
+        
         if not openai_client or not os.getenv("OPENAI_API_KEY"):
+            logger.warning("[LLM_STRUCT] OpenAI client not available or API key missing")
             return None
 
         prompt = get_llm_structuring_prompt(responses)
+        logger.info(f"[LLM_STRUCT] LLM model: {os.getenv('LLM_MODEL', 'gpt-4o-mini')}")
+        logger.info(f"[LLM_STRUCT] Prompt length: {len(prompt)} chars")
         
         # Try with JSON mode first (for supported models)
         try:
+            logger.info("[LLM_STRUCT] Attempting with JSON mode...")
             response = openai_client.chat.completions.create(
                 model=os.getenv("LLM_MODEL", "gpt-4o-mini"),  # Cost-effective and accurate
                 messages=[
@@ -190,9 +245,10 @@ def structure_with_openai(responses: dict) -> Optional[dict]:
                 max_tokens=500,
                 response_format={"type": "json_object"}
             )
+            logger.info("[LLM_STRUCT] ✓ JSON mode request succeeded")
         except Exception as e:
             # Fallback for models that don't support JSON mode
-            logger.warning(f"JSON mode not supported, using standard mode: {str(e)}")
+            logger.warning(f"[LLM_STRUCT] JSON mode not supported, falling back: {str(e)}")
             response = openai_client.chat.completions.create(
                 model=os.getenv("LLM_MODEL", "gpt-4o-mini"),  # Cost-effective and accurate
                 messages=[
@@ -202,21 +258,29 @@ def structure_with_openai(responses: dict) -> Optional[dict]:
                 temperature=0.1,
                 max_tokens=500
             )
+            logger.info("[LLM_STRUCT] ✓ Standard mode request succeeded")
         
         response_text = response.choices[0].message.content
+        logger.info(f"[LLM_STRUCT] LLM response length: {len(response_text)} chars")
         
         # Try to parse as JSON directly
         try:
+            logger.info("[LLM_STRUCT] Parsing LLM response as JSON...")
             data = json.loads(response_text)
+            logger.info("[LLM_STRUCT] ✓ Direct JSON parsing succeeded")
         except:
             # Fallback: extract JSON from text
+            logger.info("[LLM_STRUCT] Direct parsing failed, extracting JSON from text...")
             json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group(0))
+                logger.info("[LLM_STRUCT] ✓ Extracted JSON from text")
             else:
+                logger.error("[LLM_STRUCT] ✗ No JSON found in response")
                 return None
         
         # Map to our expected format (backward compatible)
+        logger.info("[LLM_STRUCT] Mapping LLM output to expected format...")
         structured = {
             "job_title": data.get("job_title", ""),
             "total_experience": data.get("total_experience", ""),
@@ -226,6 +290,13 @@ def structure_with_openai(responses: dict) -> Optional[dict]:
             "availability": data.get("availability", "Not specified")
         }
         
+        logger.info(f"[LLM_STRUCT] Structured data:")
+        logger.info(f"[LLM_STRUCT]   - job_title: {structured['job_title']}")
+        logger.info(f"[LLM_STRUCT]   - total_experience: {structured['total_experience']}")
+        logger.info(f"[LLM_STRUCT]   - skills: {structured['skills']}")
+        logger.info(f"[LLM_STRUCT]   - tools: {structured['tools']}")
+        logger.info(f"[LLM_STRUCT]   - location: {structured['preferred_location']}")
+        
         # Also maintain backward compatibility fields
         if structured["job_title"]:
             structured["primary_skill"] = structured["job_title"]
@@ -234,14 +305,16 @@ def structure_with_openai(responses: dict) -> Optional[dict]:
             years_match = re.search(r'(\d+)', structured["total_experience"])
             if years_match:
                 structured["experience_years"] = int(years_match.group(1))
+                logger.info(f"[LLM_STRUCT]   - experience_years: {structured['experience_years']}")
         
         # Combine skills and tools for backward compatibility
         all_skills = structured.get("skills", []) + structured.get("tools", [])
         structured["skills_combined"] = all_skills
         
+        logger.info(f"[LLM_STRUCT] ✓ OpenAI structuring completed successfully")
         return structured
     except Exception as e:
-        logger.warning(f"OpenAI structuring error: {e}")
+        logger.error(f"[LLM_STRUCT] ✗ OpenAI structuring error: {str(e)}", exc_info=True)
     
     return None
 
