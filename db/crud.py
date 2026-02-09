@@ -1001,7 +1001,7 @@ def update_cv_status(worker_id: str, has_cv: bool = True) -> bool:
 def get_latest_voice_session_by_worker(worker_id: str) -> dict:
     """
     Get the latest voice session for a worker.
-    Returns most recent session with exp_ready flag status.
+    Returns most recent session with exp_ready flag status (as boolean).
     """
     conn = None
     try:
@@ -1016,6 +1016,9 @@ def get_latest_voice_session_by_worker(worker_id: str) -> dict:
         row = cursor.fetchone()
         if row:
             session_dict = dict(row)
+            # Convert exp_ready from integer (0/1) to boolean for JSON response
+            if 'exp_ready' in session_dict and session_dict['exp_ready'] is not None:
+                session_dict['exp_ready'] = bool(session_dict['exp_ready'])
             logger.debug(
                 f"[VOICE SESSION] Latest session for worker {worker_id}: call_id={session_dict.get('call_id')}, exp_ready={session_dict.get('exp_ready')}")
             return session_dict
@@ -1083,29 +1086,6 @@ def get_voice_session_by_phone(phone_number: str) -> dict:
         if conn is not None:
             conn.close()
 
-
-def get_latest_voice_session_by_worker(worker_id: str) -> dict:
-    """Get the latest voice session for a specific worker. Orders by created_at descending."""
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM voice_sessions 
-            WHERE worker_id = ? 
-            ORDER BY created_at DESC 
-            LIMIT 1
-        """, (worker_id,))
-        row = cursor.fetchone()
-        if row:
-            return dict(row)
-        return None
-    except Exception as e:
-        logger.error(f"Error getting latest voice session for worker {worker_id}: {str(e)}", exc_info=True)
-        return None
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def save_job_listing(title: str, description: str, required_skills: list, location: str) -> int:
