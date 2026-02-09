@@ -5,6 +5,7 @@ from typing import Optional
 import logging
 import subprocess
 import tempfile
+import uuid
 
 # Get logger (logging configured in main)
 logger = logging.getLogger(__name__)
@@ -269,47 +270,61 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         
         images = convert_from_path(pdf_path, first_page=1, last_page=1, dpi=300)
         if images:
-            # Use context manager to ensure proper file handling
-            temp_file = None
+            # Create a stable temp location instead of using NamedTemporaryFile
+            # This avoids Windows file locking issues
+            import uuid
+            temp_dir = Path(tempfile.gettempdir()) / "cv_ocr_temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Generate unique filename
+            temp_file_path = str(temp_dir / f"pdf_page_{uuid.uuid4().hex}.png")
+            
             try:
-                temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-                temp_file_path = temp_file.name
+                # Save image to temp location
                 images[0].save(temp_file_path, 'PNG')
-                temp_file.close()  # Close before OCR processing
-                temp_file = None
+                logger.info(f"Saved PDF page to temp location: {temp_file_path}")
                 
-                # Force garbage collection to release file handles
+                # Force garbage collection to release PIL image handles
+                del images
                 gc.collect()
-                time.sleep(0.1)  # Small delay for file system to release handles
+                time.sleep(0.05)
                 
                 # Use image OCR extraction
                 logger.info(f"Starting OCR on converted PDF image: {temp_file_path}")
                 ocr_text = extract_text_from_image(temp_file_path)
                 
+                # After OCR, force another garbage collection
+                gc.collect()
+                time.sleep(0.05)
+                
                 # Try to clean up temp file with retries for Windows file locking
-                for attempt in range(3):
+                cleanup_success = False
+                for attempt in range(5):
                     try:
                         if os.path.exists(temp_file_path):
                             os.unlink(temp_file_path)
+                            cleanup_success = True
+                            logger.info(f"Successfully deleted temp file: {temp_file_path}")
                         break
                     except (OSError, PermissionError) as e:
-                        if attempt < 2:
-                            logger.warning(f"Failed to delete temp file on attempt {attempt + 1}: {e}. Retrying...")
+                        if attempt < 4:
+                            logger.warning(f"Failed to delete temp file on attempt {attempt + 1}/5: {e}")
                             gc.collect()
-                            time.sleep(0.2)
+                            time.sleep(0.3 * (attempt + 1))  # Progressive backoff
                         else:
-                            logger.warning(f"Could not delete temp file after retries: {temp_file_path}")
+                            logger.warning(f"Could not delete temp file after 5 attempts: {temp_file_path}. It will be cleaned up on next system temp cleanup.")
                 
                 if ocr_text and len(ocr_text.strip()) > 10:
                     logger.info(f"OCR on PDF first page: Extracted {len(ocr_text)} characters")
                     return ocr_text.strip()
-            finally:
-                # Ensure temp file handle is closed
-                if temp_file is not None:
-                    try:
-                        temp_file.close()
-                    except:
-                        pass
+            except Exception as inner_e:
+                logger.error(f"Error processing temp PDF image: {inner_e}", exc_info=True)
+                # Try to clean up even on error
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                except:
+                    pass
     except ImportError:
         logger.warning("pdf2image not available. For scanned PDFs, install: pip install pdf2image poppler")
     except Exception as e:
