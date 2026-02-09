@@ -7,6 +7,7 @@ from ..db import crud
 
 # Use root logger configured in main.py - all logs will be saved to file
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 from ..db.models import VoiceWebhookInput, TranscriptSubmitRequest, LinkCallToWorkerRequest, ExperienceConfirmRequest
 from ..services import conversation_engine, language_renderer

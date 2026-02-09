@@ -13,12 +13,15 @@ from fastapi.responses import JSONResponse
 import logging
 from dotenv import load_dotenv
 
-# Configure logging
+# Configure logging - SET TO DEBUG LEVEL BEFORE SETUP
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+logger.info("=" * 80)
+logger.info("Starting application...")
+logger.info("=" * 80)
 
 # Load environment variables from .env file
 load_dotenv()

@@ -5,8 +5,9 @@ import uuid
 from typing import Optional
 from app.db.database import get_db_connection
 
-# Configure logging
+# Configure logging - ensure DEBUG level is captured
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 def create_worker(worker_id: str, mobile_number: str) -> bool:

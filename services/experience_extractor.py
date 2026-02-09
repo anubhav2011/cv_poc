@@ -10,6 +10,7 @@ Uses LLM only for final structuring (not conversation control)
 """
 import logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # Initialize OpenAI client (lazy / safe if key missing)
 openai_client = None

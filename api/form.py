@@ -19,6 +19,7 @@ from ..services.education_ocr_cleaner import clean_education_ocr_extraction
 
 # Configure logging - Use root logger configured in main.py
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 router = APIRouter(prefix="/form", tags=["form"])
 
