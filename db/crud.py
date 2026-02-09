@@ -1233,8 +1233,8 @@ def save_educational_document(worker_id: str, education_data: dict) -> bool:
 
         cursor.execute("""
         INSERT INTO educational_documents
-        (worker_id, document_type, qualification, board, stream, year_of_passing, school_name, marks_type, marks, percentage, institution)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (worker_id, document_type, qualification, board, stream, year_of_passing, school_name, marks_type, marks, percentage)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             worker_id,
             education_data.get("document_type", "marksheet"),
@@ -1245,8 +1245,7 @@ def save_educational_document(worker_id: str, education_data: dict) -> bool:
             education_data.get("school_name", ""),
             education_data.get("marks_type", ""),
             education_data.get("marks", ""),
-            pct,
-            education_data.get("institution", "")
+            pct
         ))
         conn.commit()
         logger.info(f"Educational document saved successfully for {worker_id}")
