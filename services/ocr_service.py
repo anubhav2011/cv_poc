@@ -264,21 +264,56 @@ def extract_text_from_pdf(pdf_path: str) -> str:
     logger.warning("PDF has no extractable text (may be scanned PDF). Attempting OCR on first page...")
     try:
         from pdf2image import convert_from_path
+        import gc
+        import time
+        
         images = convert_from_path(pdf_path, first_page=1, last_page=1, dpi=300)
         if images:
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
-                images[0].save(tmp_file.name, 'PNG')
+            # Use context manager to ensure proper file handling
+            temp_file = None
+            try:
+                temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+                temp_file_path = temp_file.name
+                images[0].save(temp_file_path, 'PNG')
+                temp_file.close()  # Close before OCR processing
+                temp_file = None
+                
+                # Force garbage collection to release file handles
+                gc.collect()
+                time.sleep(0.1)  # Small delay for file system to release handles
+                
                 # Use image OCR extraction
-                ocr_text = extract_text_from_image(tmp_file.name)
-                os.unlink(tmp_file.name)  # Clean up temp file
+                logger.info(f"Starting OCR on converted PDF image: {temp_file_path}")
+                ocr_text = extract_text_from_image(temp_file_path)
+                
+                # Try to clean up temp file with retries for Windows file locking
+                for attempt in range(3):
+                    try:
+                        if os.path.exists(temp_file_path):
+                            os.unlink(temp_file_path)
+                        break
+                    except (OSError, PermissionError) as e:
+                        if attempt < 2:
+                            logger.warning(f"Failed to delete temp file on attempt {attempt + 1}: {e}. Retrying...")
+                            gc.collect()
+                            time.sleep(0.2)
+                        else:
+                            logger.warning(f"Could not delete temp file after retries: {temp_file_path}")
+                
                 if ocr_text and len(ocr_text.strip()) > 10:
                     logger.info(f"OCR on PDF first page: Extracted {len(ocr_text)} characters")
                     return ocr_text.strip()
+            finally:
+                # Ensure temp file handle is closed
+                if temp_file is not None:
+                    try:
+                        temp_file.close()
+                    except:
+                        pass
     except ImportError:
         logger.warning("pdf2image not available. For scanned PDFs, install: pip install pdf2image poppler")
     except Exception as e:
-        logger.warning(f"OCR on PDF failed: {e}")
+        logger.warning(f"OCR on PDF failed: {e}", exc_info=True)
     
     logger.error(f"Failed to extract text from PDF: {pdf_path}")
     return ""
