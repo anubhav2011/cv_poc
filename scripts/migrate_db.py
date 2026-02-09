@@ -13,7 +13,7 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).parent / "data" / "workers.db"
+DB_PATH = Path(__file__).resolve().parent.parent / "data" / "workers.db"
 
 def migrate_database():
     """Run database migrations to ensure schema is up-to-date."""
