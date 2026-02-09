@@ -17,6 +17,7 @@ from ..services.ocr_service import ocr_to_text, PADDLEOCR_AVAILABLE, PYTESSERACT
 from ..services.ocr_cleaner import clean_ocr_extraction, _normalize_name
 from ..services.education_ocr_cleaner import clean_education_ocr_extraction
 from ..services.llm_document_extractor import extract_personal_data_from_ocr, extract_educational_data_from_ocr
+from ..services.document_verification import verify_documents
 
 # Configure logging - Use root logger configured in main.py
 logger = logging.getLogger(__name__)
@@ -275,8 +276,16 @@ async def get_worker_data(worker_id: str):
                     personal_saved = ocr_result.get("personal_saved", False)
                     personal_has_data = ocr_result.get("personal_has_data", False)
                     education_saved_count = ocr_result.get("education_saved_count", 0)
+                    verification_status = ocr_result.get("verification_status", "not_applicable")
+                    verification_verified = ocr_result.get("verification_verified", True)
+                    verification_message = ocr_result.get("verification_message")
+                    reupload_required = ocr_result.get("reupload_required", False)
 
-                    if personal_has_data or education_saved_count > 0:
+                    # Check verification status first
+                    if verification_status == "mismatched":
+                        ocr_status = "verification_failed"
+                        message = f"Document Verification Failed: {verification_message}. Please reupload your documents to ensure name and DOB match across documents."
+                    elif personal_has_data or education_saved_count > 0:
                         ocr_status = "completed"
                         message = "All data extracted successfully."
                     else:
@@ -353,6 +362,8 @@ async def get_worker_data(worker_id: str):
             "ocr_status": ocr_status,
             "message": message,
             "exp_ready": exp_ready,  # FLAG-BASED FLOW: Include exp_ready flag
+            "verification_status": locals().get("verification_status", "not_applicable"),
+            "reupload_required": locals().get("reupload_required", False),
         }
 
         # FLAG-BASED FLOW: Include experience data and call_id if exp_ready=true
@@ -371,13 +382,22 @@ async def get_worker_data(worker_id: str):
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-def _ocr_result(personal_saved: bool, personal_has_data: bool, education_saved_count: int):
+def _ocr_result(personal_saved: bool, personal_has_data: bool, education_saved_count: int, verification_result: dict = None):
     """Helper to return OCR result dict."""
-    return {
+    result = {
         "personal_saved": personal_saved,
         "personal_has_data": personal_has_data,
         "education_saved_count": education_saved_count,
     }
+    
+    # Add verification result if available
+    if verification_result:
+        result["verification_status"] = verification_result.get("verification_status", "not_applicable")
+        result["verification_verified"] = verification_result.get("verified", True)
+        result["verification_message"] = verification_result.get("error_message")
+        result["reupload_required"] = verification_result.get("reupload_required", False)
+    
+    return result
 
 
 async def process_ocr_background(worker_id: str, personal_doc_path: str, educational_doc_path: str = None):
@@ -670,11 +690,58 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
         else:
             logger.info(f"[Background OCR] No educational documents to process for worker {worker_id}")
 
+        # ===== VERIFICATION: Check if personal and educational documents match =====
+        verification_result = None
+        if personal_saved and education_saved_count > 0:
+            logger.info("=" * 80)
+            logger.info("[Verification] Starting document verification...")
+            logger.info("=" * 80)
+            
+            # Get personal data
+            personal_data = {
+                "name": name,
+                "dob": dob,
+                "address": address
+            }
+            
+            # Get educational data (from the last processed document for verification)
+            # Note: We verify only the first/latest educational document for name/dob match
+            # If multiple documents, we only check against the most recent one
+            if education_saved_count > 0:
+                # Retrieve the latest educational document from database
+                education_docs = crud.get_educational_documents(worker_id)
+                if education_docs:
+                    latest_edu_doc = education_docs[-1]  # Get the last one
+                    educational_data = {
+                        "name": latest_edu_doc.get("school_name", ""),  # School name is closest to "name" field
+                        "dob": None  # Educational documents typically don't have DOB
+                    }
+                    
+                    # Run verification
+                    verification_result = verify_documents(personal_data, educational_data)
+                    
+                    logger.info(f"[Verification] Status: {verification_result.get('verification_status')}")
+                    if not verification_result.get('verified'):
+                        logger.error(f"[Verification] ERROR: {verification_result.get('error_message')}")
+                    else:
+                        logger.info(f"[Verification] ✓ Verification passed")
+                        if verification_result.get('name_message'):
+                            logger.info(f"[Verification] {verification_result.get('name_message')}")
+                        if verification_result.get('dob_message'):
+                            logger.info(f"[Verification] {verification_result.get('dob_message')}")
+        else:
+            logger.info("[Verification] Skipping verification (no personal or education data)")
+            verification_result = {
+                'verified': True,
+                'verification_status': 'not_applicable',
+                'error_message': None
+            }
+
         logger.info("=" * 80)
         logger.info(
             f"[Background OCR] ✓ OCR processing completed for worker {worker_id} (personal_saved={personal_saved}, education_saved={education_saved_count})")
         logger.info("=" * 80)
-        return _ocr_result(personal_saved, personal_has_data, education_saved_count)
+        return _ocr_result(personal_saved, personal_has_data, education_saved_count, verification_result)
 
     except Exception as e:
         logger.error("=" * 80)
