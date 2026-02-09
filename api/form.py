@@ -320,25 +320,49 @@ async def get_worker_data(worker_id: str):
         experience_data = None
         call_id_for_confirmation = None
 
+        logger.info("[EXP_READY] Checking experience ready status...")
         latest_session = crud.get_latest_voice_session_by_worker(worker_id)
+        
         if latest_session:
-            exp_ready = bool(latest_session.get("exp_ready", 0))
+            logger.info(f"[EXP_READY] Latest voice session found for worker {worker_id}")
+            logger.info(f"[EXP_READY]   - call_id: {latest_session.get('call_id')}")
+            logger.info(f"[EXP_READY]   - exp_ready (raw): {latest_session.get('exp_ready')} (type: {type(latest_session.get('exp_ready')).__name__})")
+            
+            # IMPORTANT: The exp_ready should already be converted to boolean by get_latest_voice_session_by_worker
+            # But we explicitly ensure it's a boolean here for the response
+            exp_ready_value = latest_session.get("exp_ready", False)
+            
+            # Handle both cases: already boolean from CRUD function, or raw integer from database
+            if isinstance(exp_ready_value, bool):
+                exp_ready = exp_ready_value
+                logger.info(f"[EXP_READY]   - Already boolean: {exp_ready}")
+            else:
+                exp_ready = bool(exp_ready_value)
+                logger.info(f"[EXP_READY]   - Converted to boolean: {exp_ready} (from {exp_ready_value})")
+            
             if exp_ready and latest_session.get("experience_json"):
                 try:
                     experience_data = json.loads(latest_session["experience_json"])
                     call_id_for_confirmation = latest_session.get("call_id")
-                    logger.info(f"✓ Found experience data ready for review (exp_ready=true) for worker {worker_id}")
-                    logger.info(f"  Call ID: {call_id_for_confirmation}")
+                    logger.info(f"[EXP_READY] ✓ Experience data found and parsed (exp_ready={exp_ready})")
+                    logger.info(f"[EXP_READY]   - Call ID: {call_id_for_confirmation}")
+                    logger.info(f"[EXP_READY]   - Experience keys: {list(experience_data.keys()) if isinstance(experience_data, dict) else 'not a dict'}")
                 except (TypeError, json.JSONDecodeError) as e:
-                    logger.warning(f"Failed to parse experience_json for worker {worker_id}: {str(e)}")
+                    logger.warning(f"[EXP_READY] Failed to parse experience_json: {str(e)}")
                     experience_data = None
+            elif exp_ready:
+                logger.warning(f"[EXP_READY] ⚠ exp_ready={exp_ready} but experience_json is empty or missing")
+            else:
+                logger.info(f"[EXP_READY] exp_ready={exp_ready}, experience data not ready yet")
+        else:
+            logger.info(f"[EXP_READY] No voice session found for worker {worker_id}")
 
         logger.info(f"Returning worker data for {worker_id}:")
         logger.info(
             f"  Personal data: name={bool(worker_dict.get('name'))}, dob={bool(worker_dict.get('dob'))}, address={bool(worker_dict.get('address'))}")
         logger.info(
             f"  Education records: {len(education_list)}, has_experience={has_experience}, has_cv={has_cv}, ocr_status={ocr_status}")
-        logger.info(f"  exp_ready: {exp_ready}, experience_data_available: {experience_data is not None}")
+        logger.info(f"  exp_ready: {exp_ready} (type: {type(exp_ready).__name__}), experience_data_available: {experience_data is not None}")
 
         # Build response with all required fields (has_cv/has_experience for Access Resume visibility)
         # Normalize worker name for display (fixes existing DB records with OCR artifacts like leading ')
@@ -358,6 +382,14 @@ async def get_worker_data(worker_id: str):
         if exp_ready:
             response_data["experience"] = experience_data
             response_data["call_id"] = call_id_for_confirmation
+            logger.info(f"✓ Including experience data in response (exp_ready=true)")
+        else:
+            logger.info(f"✓ Experience data NOT included (exp_ready=false)")
+
+        logger.info(f"[RESPONSE] Building final response:")
+        logger.info(f"  - exp_ready in response: {response_data.get('exp_ready')}")
+        logger.info(f"  - experience in response: {response_data.get('experience') is not None}")
+        logger.info(f"  - call_id in response: {response_data.get('call_id') is not None}")
 
         return JSONResponse(
             status_code=200,

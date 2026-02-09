@@ -1017,12 +1017,24 @@ def get_latest_voice_session_by_worker(worker_id: str) -> dict:
         if row:
             session_dict = dict(row)
             # Convert exp_ready from integer (0/1) to boolean for JSON response
+            exp_ready_raw = session_dict.get('exp_ready')
+            logger.info(f"[VOICE SESSION] Raw exp_ready from DB: {exp_ready_raw} (type: {type(exp_ready_raw).__name__})")
+            
             if 'exp_ready' in session_dict and session_dict['exp_ready'] is not None:
                 session_dict['exp_ready'] = bool(session_dict['exp_ready'])
-            logger.debug(
-                f"[VOICE SESSION] Latest session for worker {worker_id}: call_id={session_dict.get('call_id')}, exp_ready={session_dict.get('exp_ready')}")
+                logger.info(f"[VOICE SESSION] Converted exp_ready to boolean: {session_dict['exp_ready']}")
+            else:
+                logger.warning(f"[VOICE SESSION] exp_ready field missing or None")
+                
+            logger.info(f"[VOICE SESSION] Latest session for worker {worker_id}:")
+            logger.info(f"  - call_id: {session_dict.get('call_id')}")
+            logger.info(f"  - status: {session_dict.get('status')}")
+            logger.info(f"  - current_step: {session_dict.get('current_step')}")
+            logger.info(f"  - exp_ready: {session_dict.get('exp_ready')} (type: {type(session_dict.get('exp_ready')).__name__})")
+            logger.info(f"  - has_transcript: {len(session_dict.get('transcript', '')) > 0}")
+            logger.info(f"  - has_experience_json: {len(session_dict.get('experience_json', '')) > 0}")
             return session_dict
-        logger.debug(f"No voice sessions found for worker {worker_id}")
+        logger.info(f"No voice sessions found for worker {worker_id}")
         return None
     except Exception as e:
         logger.error(f"Error getting latest voice session for {worker_id}: {str(e)}", exc_info=True)
