@@ -856,7 +856,7 @@ def update_voice_session(call_id: str, step: int, status: str = "ongoing", respo
 
 
 def get_voice_session(call_id: str) -> dict:
-    """Get voice session details"""
+    """Get voice session details with exp_ready as boolean"""
     conn = None
     try:
         conn = get_db_connection()
@@ -864,7 +864,11 @@ def get_voice_session(call_id: str) -> dict:
         cursor.execute("SELECT * FROM voice_sessions WHERE call_id = ?", (call_id,))
         row = cursor.fetchone()
         if row:
-            return dict(row)
+            session_dict = dict(row)
+            # Convert exp_ready from integer (0/1) to boolean for consistency
+            if 'exp_ready' in session_dict and session_dict['exp_ready'] is not None:
+                session_dict['exp_ready'] = bool(session_dict['exp_ready'])
+            return session_dict
         return None
     except Exception as e:
         logger.error(f"Error getting voice session {call_id}: {str(e)}", exc_info=True)
@@ -1081,16 +1085,24 @@ def update_exp_ready(call_id: str, exp_ready: bool = True) -> bool:
 
 
 def get_voice_session_by_phone(phone_number: str) -> dict:
-    """Get voice session by phone number (most recent)"""
+    """Get the most recent voice session by phone number with exp_ready as boolean."""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM voice_sessions WHERE phone_number = ? ORDER BY created_at DESC LIMIT 1",
-                       (phone_number,))
+        cursor.execute("""
+            SELECT * FROM voice_sessions 
+            WHERE phone_number = ? 
+            ORDER BY created_at DESC 
+            LIMIT 1
+        """, (phone_number,))
         row = cursor.fetchone()
         if row:
-            return dict(row)
+            session_dict = dict(row)
+            # Convert exp_ready from integer (0/1) to boolean for consistency
+            if 'exp_ready' in session_dict and session_dict['exp_ready'] is not None:
+                session_dict['exp_ready'] = bool(session_dict['exp_ready'])
+            return session_dict
         return None
     except Exception as e:
         logger.error(f"Error getting voice session by phone {phone_number}: {str(e)}", exc_info=True)
