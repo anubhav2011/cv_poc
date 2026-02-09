@@ -2002,3 +2002,151 @@ async def final_submit(worker_id: str, background_tasks: BackgroundTasks):
     except Exception as e:
         logger.error(f"Error in final submit: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Final submission failed: {str(e)}")
+
+
+@router.get("/worker/{worker_id}/data")
+async def get_worker_data(worker_id: str):
+    """
+    Get worker data including personal info, education, and experience status.
+    This endpoint is polled by frontend to check if exp_ready flag is true.
+    
+    Returns:
+    {
+        "status": "success",
+        "worker": {...},
+        "education": [...],
+        "has_experience": bool,
+        "has_cv": bool,
+        "ocr_status": str,
+        "exp_ready": bool,  # TRUE when experience is extracted and ready
+        "experience": {...},  # Only included when exp_ready=true
+        "call_id": str,  # Call ID for confirmation, only when exp_ready=true
+        "message": str
+    }
+    """
+    try:
+        logger.info("=" * 80)
+        logger.info(f"[GET_WORKER_DATA] Fetching worker data for {worker_id}")
+        logger.info("=" * 80)
+        
+        # Get worker record
+        worker_dict = crud.get_worker(worker_id)
+        if not worker_dict:
+            logger.warning(f"Worker {worker_id} not found")
+            raise HTTPException(status_code=404, detail="Worker not found")
+        
+        logger.info(f"[GET_WORKER_DATA] Worker found: {worker_dict.get('name', 'Unknown')}")
+        
+        # Get education records
+        education_list = crud.get_education_by_worker(worker_id)
+        has_education = len(education_list) > 0
+        logger.info(f"[GET_WORKER_DATA] Education records: {len(education_list)}")
+        
+        # Check if worker has experience saved
+        has_experience = crud.has_experience(worker_id)
+        logger.info(f"[GET_WORKER_DATA] Has experience saved: {has_experience}")
+        
+        # Check if worker has CV generated
+        has_cv = _worker_has_cv(worker_id)
+        logger.info(f"[GET_WORKER_DATA] Has CV generated: {has_cv}")
+        
+        # Get OCR status
+        ocr_status = crud.get_ocr_status(worker_id) or "pending"
+        logger.info(f"[GET_WORKER_DATA] OCR status: {ocr_status}")
+        
+        # Determine completion message
+        message = ""
+        if has_cv:
+            message = "CV generated successfully"
+        elif has_experience:
+            message = "Experience saved successfully"
+        elif ocr_status == "completed":
+            message = "Personal data saved from OCR"
+        else:
+            message = "Waiting for documents"
+        
+        # FLAG-BASED FLOW: Check exp_ready flag and get experience data from latest voice session
+        exp_ready = False
+        experience_data = None
+        call_id_for_confirmation = None
+
+        logger.info("[EXP_READY] Checking experience ready status...")
+        latest_session = crud.get_latest_voice_session_by_worker(worker_id)
+        
+        if latest_session:
+            logger.info(f"[EXP_READY] Latest voice session found for worker {worker_id}")
+            logger.info(f"[EXP_READY]   - call_id: {latest_session.get('call_id')}")
+            logger.info(f"[EXP_READY]   - exp_ready (raw): {latest_session.get('exp_ready')} (type: {type(latest_session.get('exp_ready')).__name__})")
+            
+            # IMPORTANT: The exp_ready should already be converted to boolean by get_latest_voice_session_by_worker
+            # But we explicitly ensure it's a boolean here for the response
+            exp_ready_value = latest_session.get("exp_ready", False)
+            
+            # Handle both cases: already boolean from CRUD function, or raw integer from database
+            if isinstance(exp_ready_value, bool):
+                exp_ready = exp_ready_value
+                logger.info(f"[EXP_READY]   - Already boolean: {exp_ready}")
+            else:
+                exp_ready = bool(exp_ready_value)
+                logger.info(f"[EXP_READY]   - Converted to boolean: {exp_ready} (from {exp_ready_value})")
+            
+            if exp_ready and latest_session.get("experience_json"):
+                try:
+                    experience_data = json.loads(latest_session["experience_json"])
+                    call_id_for_confirmation = latest_session.get("call_id")
+                    logger.info(f"[EXP_READY] ✓ Experience data found and parsed (exp_ready={exp_ready})")
+                    logger.info(f"[EXP_READY]   - Call ID: {call_id_for_confirmation}")
+                    logger.info(f"[EXP_READY]   - Experience keys: {list(experience_data.keys()) if isinstance(experience_data, dict) else 'not a dict'}")
+                except (TypeError, json.JSONDecodeError) as e:
+                    logger.warning(f"[EXP_READY] Failed to parse experience_json: {str(e)}")
+                    experience_data = None
+            elif exp_ready:
+                logger.warning(f"[EXP_READY] ⚠ exp_ready={exp_ready} but experience_json is empty or missing")
+            else:
+                logger.info(f"[EXP_READY] exp_ready={exp_ready}, experience data not ready yet")
+        else:
+            logger.info(f"[EXP_READY] No voice session found for worker {worker_id}")
+
+        logger.info(f"Returning worker data for {worker_id}:")
+        logger.info(
+            f"  Personal data: name={bool(worker_dict.get('name'))}, dob={bool(worker_dict.get('dob'))}, address={bool(worker_dict.get('address'))}")
+        logger.info(
+            f"  Education records: {len(education_list)}, has_experience={has_experience}, has_cv={has_cv}, ocr_status={ocr_status}")
+        logger.info(f"  exp_ready: {exp_ready} (type: {type(exp_ready).__name__}), experience_data_available: {experience_data is not None}")
+
+        # Build response with all required fields (has_cv/has_experience for Access Resume visibility)
+        # Normalize worker name for display (fixes existing DB records with OCR artifacts like leading ')
+        worker_for_response = {**worker_dict, "name": _normalize_name(worker_dict.get("name") or "")}
+        response_data = {
+            "status": "success",
+            "worker": WorkerData.model_validate(worker_for_response).model_dump(),
+            "education": [edu.model_dump() for edu in education_list],
+            "has_experience": has_experience,
+            "has_cv": has_cv,
+            "ocr_status": ocr_status,
+            "message": message,
+            "exp_ready": exp_ready,  # FLAG-BASED FLOW: Include exp_ready flag
+        }
+
+        # FLAG-BASED FLOW: Include experience data and call_id if exp_ready=true
+        if exp_ready:
+            response_data["experience"] = experience_data
+            response_data["call_id"] = call_id_for_confirmation
+            logger.info(f"✓ Including experience data in response (exp_ready=true)")
+        else:
+            logger.info(f"✓ Experience data NOT included (exp_ready=false)")
+
+        logger.info(f"[RESPONSE] Building final response:")
+        logger.info(f"  - exp_ready in response: {response_data.get('exp_ready')}")
+        logger.info(f"  - experience in response: {response_data.get('experience') is not None}")
+        logger.info(f"  - call_id in response: {response_data.get('call_id') is not None}")
+
+        return JSONResponse(
+            status_code=200,
+            content=response_data
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting worker data: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve worker data: {str(e)}")
